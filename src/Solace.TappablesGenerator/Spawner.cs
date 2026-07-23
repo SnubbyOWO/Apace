@@ -143,16 +143,26 @@ public class Spawner
         int cyclesToSpawn = Math.Min(spawnCycleIndex - lastSpawnCycle, _maxTappableLifetimeIntervals);
         for (int index = 0; index < cyclesToSpawn; index++)
         {
-            SpawnTappablesForTile(tileX, tileY, spawnCycleTime - SPAWN_INTERVAL * (cyclesToSpawn - index - 1), tappables, encounters);
+            bool latestCycle = index == cyclesToSpawn - 1;
+            SpawnTappablesForTile(
+                tileX,
+                tileY,
+                spawnCycleTime - SPAWN_INTERVAL * (cyclesToSpawn - index - 1),
+                latestCycle,
+                tappables,
+                encounters);
         }
 
         _lastSpawnCycleForTile[(tileX << 16) + tileY] = spawnCycleIndex;
     }
 
-    private void SpawnTappablesForTile(int tileX, int tileY, long currentTime, List<Tappable> tappables, List<Encounter> encounters)
+    private void SpawnTappablesForTile(int tileX, int tileY, long currentTime, bool generateEncounters, List<Tappable> tappables, List<Encounter> encounters)
     {
         tappables.AddRange(_tappableGenerator.GenerateTappables(tileX, tileY, currentTime));
-        encounters.AddRange(_encounterGenerator.GenerateEncounters(tileX, tileY, currentTime));
+        if (generateEncounters)
+        {
+            encounters.AddRange(_encounterGenerator.GenerateEncounters(tileX, tileY, currentTime));
+        }
     }
 
     private async Task SendSpawnedTappables(List<Tappable> tappables, List<Encounter> encounters)
