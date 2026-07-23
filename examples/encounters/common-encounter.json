@@ -1,5 +1,5 @@
 {
-  "icon": "minecraft:adventure_crystal_common",
+  "icon": "genoa:adventure_generic_map",
   "rarity": "COMMON",
   "duration": 900,
   "adventureGroup": "common",
