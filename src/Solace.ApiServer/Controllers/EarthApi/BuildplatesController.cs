@@ -921,11 +921,7 @@ internal sealed class BuildplatesController : SolaceControllerBase
                 "CK06Yzm2",    // TODO
                 new Dimension(size, size),
                 new Offset(0, offset, 0),
-                instanceInfo.Type is BuildplateInstancesManager.InstanceType.PLAY
-                    or BuildplateInstancesManager.InstanceType.ENCOUNTER
-                    or BuildplateInstancesManager.InstanceType.PLAYER_ADVENTURE
-                    ? Program.PlayableScale
-                    : !fullsize ? scale : 1,
+                GetBlocksPerMeter(instanceInfo.Type, scale),
                 fullsize,
                 gameplayMode,
                 SurfaceOrientation.HORIZONTAL,
@@ -938,6 +934,18 @@ internal sealed class BuildplatesController : SolaceControllerBase
             new Coordinate(0.0f, 0.0f)    // TODO
         );
     }
+
+    private static int GetBlocksPerMeter(BuildplateInstancesManager.InstanceType instanceType, int buildplateScale)
+        => instanceType switch
+        {
+            BuildplateInstancesManager.InstanceType.BUILD => buildplateScale,
+            BuildplateInstancesManager.InstanceType.PLAY
+                or BuildplateInstancesManager.InstanceType.ENCOUNTER
+                or BuildplateInstancesManager.InstanceType.PLAYER_ADVENTURE => Program.PlayableScale,
+            BuildplateInstancesManager.InstanceType.SHARED_BUILD
+                or BuildplateInstancesManager.InstanceType.SHARED_PLAY => 1,
+            _ => throw new UnreachableException(),
+        };
 
     private sealed record BuildplateGeometry(int Size, int Offset, int Scale);
 
