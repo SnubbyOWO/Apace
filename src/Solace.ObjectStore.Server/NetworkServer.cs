@@ -97,6 +97,13 @@ public sealed partial class NetworkServer : IDisposable
                     case "STORE":
                         if (int.TryParse(arg, out int length) && length >= 0)
                         {
+                            if (length == 0)
+                            {
+                                string? emptyObjectId = await _server.StoreAsync([]);
+                                await WriteMessageAsync(writer, emptyObjectId != null ? $"OK {emptyObjectId}" : "ERR");
+                                break;
+                            }
+
                             reader.AdvanceTo(buffer.Start);
 
                             var payloadResult = await reader.ReadAtLeastAsync(length);

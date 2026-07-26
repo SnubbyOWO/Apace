@@ -122,7 +122,11 @@ public static class Program
         var loggerConfig = new LoggerConfiguration()
             .WriteTo.Console()
             .WriteTo.File("logs/api_server/log.txt", rollingInterval: RollingInterval.Day, rollOnFileSizeLimit: true, fileSizeLimitBytes: 8338607, outputTemplate: "{Timestamp:HH:mm:ss.fff} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
-            .Enrich.WithProperty("ComponentName", "ApiServer");
+            .Enrich.WithProperty("ComponentName", "ApiServer")
+            .Filter.ByExcluding(logEvent =>
+                logEvent.MessageTemplate.Text.StartsWith(
+                    "[registry] Cannot find Bedrock block for Java block",
+                    StringComparison.Ordinal));
 
         if (!string.IsNullOrWhiteSpace(options.LoggerUrl))
         {
@@ -218,6 +222,11 @@ public static class Program
         }
 
         Log.Information("Loaded static data");
+        Log.Information(
+            "Random adventure buildplates configured: {BuildplateCount} files, {RandomBuildplateChance}% chance",
+            staticData.AdventuresConfig.RandomBuildplates.Length,
+            int.Clamp(staticData.AdventuresConfig.SpawnConfig.RandomBuildplateChance, 0, 100)
+        );
 
         Log.Information("Importing shop buildplates");
 
@@ -296,7 +305,11 @@ public static class Program
             {
                 try
                 {
-                    await ImportRandomAdventureBuildplatesAsync(staticData.AdventuresConfig.RandomBuildplates);
+                    await using var randomImportObjectStore = await GetObjectStoreClient();
+                    var randomImporter = new Importer(DB, null, randomImportObjectStore, Log.Logger);
+                    await ImportRandomAdventureBuildplatesAsync(
+                        staticData.AdventuresConfig.RandomBuildplates,
+                        randomImporter);
                 }
                 catch (Exception exception)
                 {
@@ -310,7 +323,9 @@ public static class Program
         return 0;
     }
 
-    private static async Task ImportRandomAdventureBuildplatesAsync(IReadOnlyCollection<StaticBuidplate> randomBuildplates)
+    private static async Task ImportRandomAdventureBuildplatesAsync(
+        IReadOnlyCollection<StaticBuidplate> randomBuildplates,
+        Importer randomImporter)
     {
         if (randomBuildplates.Count == 0)
         {
@@ -348,8 +363,8 @@ public static class Program
 
                 await using Stream buildplateData = buildplate.OpenRead();
                 bool imported = buildplate.Extension.Equals(".json", StringComparison.OrdinalIgnoreCase)
-                    ? await importer.ImportProjectEarthTemplateAsync(buildplate.Id, $"[RANDOM] {buildplate.Id}", buildplateData, false)
-                    : await importer.ImportTemplateAsync(buildplate.Id, $"[RANDOM] {buildplate.Id}", buildplateData, false);
+                    ? await randomImporter.ImportProjectEarthTemplateAsync(buildplate.Id, $"[RANDOM] {buildplate.Id}", buildplateData, false)
+                    : await randomImporter.ImportTemplateAsync(buildplate.Id, $"[RANDOM] {buildplate.Id}", buildplateData, false);
 
                 if (imported)
                 {
@@ -366,6 +381,8 @@ public static class Program
                 failedCount++;
                 Log.Error(ex, "Failed to import random adventure buildplate {BuildplateId}", buildplate.Id);
             }
+
+            await Task.Delay(100);
         }
 
         Log.Information(

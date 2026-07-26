@@ -94,8 +94,13 @@ public sealed class Importer : IAsyncDisposable
                 return;
             }
 
-            MCeToJava.Converter.InitRegistry(Logger);
+            Logger.Information("Initializing Project Earth converter registry");
+            using var registryLogger = new LoggerConfiguration()
+                .MinimumLevel.Fatal()
+                .CreateLogger();
+            MCeToJava.Converter.InitRegistry(registryLogger);
             _projectEarthConverterInitialized = true;
+            Logger.Information("Initialized Project Earth converter registry");
         }
     }
 
