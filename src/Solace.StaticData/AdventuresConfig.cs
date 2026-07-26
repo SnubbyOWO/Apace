@@ -7,9 +7,12 @@ namespace Solace.StaticData;
 
 public sealed class AdventuresConfig
 {
-    private static readonly string[] DefaultFolders = ["common", "uncommon", "rare", "epic", "legendary", "oobe"];
+    public const string RandomFolder = "random";
+
+    private static readonly string[] DefaultFolders = ["common", "uncommon", "rare", "epic", "legendary", "oobe", RandomFolder];
 
     public readonly AdventureSpawnConfig SpawnConfig;
+    public readonly ImmutableArray<StaticBuidplate> RandomBuildplates;
     private readonly Dictionary<string, ImmutableArray<AdventureBuildplate>> _buildplatesByFolder = [];
 
     internal AdventuresConfig(string dir)
@@ -24,19 +27,32 @@ public sealed class AdventuresConfig
                 folders.Add(crystalType.Folder);
             }
 
+            RandomBuildplates = LoadRandomBuildplates(dir);
+
             foreach (string folder in folders)
             {
+                List<AdventureBuildplate> buildplates = [];
                 string buildplatesFile = Path.Combine(dir, folder, $"{folder}-buildplates.json");
-                if (!File.Exists(buildplatesFile))
+                if (File.Exists(buildplatesFile))
                 {
-                    continue;
+                    using var stream = File.OpenRead(buildplatesFile);
+                    AdventureBuildplatesFile? buildplatesConfig = Json.Deserialize<AdventureBuildplatesFile>(stream);
+                    Debug.Assert(buildplatesConfig is not null);
+                    buildplates.AddRange(buildplatesConfig.Buildplates);
                 }
 
-                using var stream = File.OpenRead(buildplatesFile);
-                AdventureBuildplatesFile? buildplates = Json.Deserialize<AdventureBuildplatesFile>(stream);
-                Debug.Assert(buildplates is not null);
+                if (folder.Equals(RandomFolder, StringComparison.OrdinalIgnoreCase))
+                {
+                    var configuredTemplateIds = buildplates
+                        .Select(buildplate => Path.GetFileNameWithoutExtension(buildplate.TemplateId))
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-                _buildplatesByFolder[folder] = [.. buildplates.Buildplates
+                    buildplates.AddRange(RandomBuildplates
+                        .Where(buildplate => configuredTemplateIds.Add(buildplate.Id))
+                        .Select(buildplate => new AdventureBuildplate(buildplate.Id, 10)));
+                }
+
+                ImmutableArray<AdventureBuildplate> normalizedBuildplates = [.. buildplates
                     .Where(buildplate => !string.IsNullOrWhiteSpace(buildplate.TemplateId))
                     .Select(buildplate => buildplate with
                     {
@@ -44,6 +60,11 @@ public sealed class AdventuresConfig
                         Weight = int.Max(0, buildplate.Weight)
                     })
                     .Where(buildplate => buildplate.Weight > 0)];
+
+                if (normalizedBuildplates.Length > 0)
+                {
+                    _buildplatesByFolder[folder] = normalizedBuildplates;
+                }
             }
         }
         catch (Exception exception)
@@ -58,6 +79,23 @@ public sealed class AdventuresConfig
         => PickWeighted(SpawnConfig.CrystalTypes, item => item.PickWeight, random);
 
     public string? PickTemplateForFolder(string folder, Random random)
+    {
+        int randomBuildplateChance = int.Clamp(SpawnConfig.RandomBuildplateChance, 0, 100);
+        if (!folder.Equals(RandomFolder, StringComparison.OrdinalIgnoreCase) &&
+            randomBuildplateChance > 0 &&
+            randomBuildplateChance > random.Next(0, 100))
+        {
+            string? randomTemplate = PickTemplateFromFolder(RandomFolder, random);
+            if (randomTemplate is not null)
+            {
+                return randomTemplate;
+            }
+        }
+
+        return PickTemplateFromFolder(folder, random);
+    }
+
+    private string? PickTemplateFromFolder(string folder, Random random)
     {
         if (!_buildplatesByFolder.TryGetValue(folder, out ImmutableArray<AdventureBuildplate> buildplates) || buildplates.Length == 0)
         {
@@ -81,6 +119,28 @@ public sealed class AdventuresConfig
 
         string folder = normalizedName[prefix.Length..];
         return PickTemplateForFolder(folder, random);
+    }
+
+    private static ImmutableArray<StaticBuidplate> LoadRandomBuildplates(string dir)
+    {
+        string randomDir = Path.Combine(dir, RandomFolder);
+        if (!Directory.Exists(randomDir))
+        {
+            return [];
+        }
+
+        return [.. Directory.EnumerateFiles(randomDir)
+            .Where(file =>
+            {
+                string extension = Path.GetExtension(file);
+                return extension.Equals(".json", StringComparison.OrdinalIgnoreCase) ||
+                       extension.Equals(".zip", StringComparison.OrdinalIgnoreCase);
+            })
+            .Where(file => !Path.GetFileName(file).Equals($"{RandomFolder}-buildplates.json", StringComparison.OrdinalIgnoreCase))
+            .Select(file => new StaticBuidplate(file))
+            .OrderBy(buildplate => buildplate.Id, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(buildplate => buildplate.Extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .DistinctBy(buildplate => buildplate.Id, StringComparer.OrdinalIgnoreCase)];
     }
 
     private static AdventureSpawnConfig LoadSpawnConfig(string dir)
@@ -129,6 +189,8 @@ public sealed class AdventuresConfig
         AdventureCrystalType[] CrystalTypes
     )
     {
+        public int RandomBuildplateChance { get; init; }
+
         public static AdventureSpawnConfig Disabled => new(0, 0, 0, 0, 0, 0, 0, []);
     }
 

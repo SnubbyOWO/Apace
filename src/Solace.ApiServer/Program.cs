@@ -290,9 +290,90 @@ public static class Program
 
         Log.Information("Updated live db");
 
+        host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStarted.Register(() =>
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await ImportRandomAdventureBuildplatesAsync(staticData.AdventuresConfig.RandomBuildplates);
+                }
+                catch (Exception exception)
+                {
+                    Log.Error(exception, "Unexpected error while importing random adventure buildplates");
+                }
+            });
+        });
+
         host.Run();
 
         return 0;
+    }
+
+    private static async Task ImportRandomAdventureBuildplatesAsync(IReadOnlyCollection<StaticBuidplate> randomBuildplates)
+    {
+        if (randomBuildplates.Count == 0)
+        {
+            Log.Information("No random adventure buildplates found");
+            return;
+        }
+
+        Log.Information("Importing {BuildplateCount} random adventure buildplates", randomBuildplates.Count);
+
+        EarthDB.ObjectResults currentBuildplates;
+        try
+        {
+            currentBuildplates = await new EarthDB.ObjectQuery(true)
+                .GetBuildplates(randomBuildplates.Select(buildplate => buildplate.Id))
+                .ExecuteAsync(DB);
+        }
+        catch (EarthDB.DatabaseException ex)
+        {
+            Log.Error("Failed to get current random adventure buildplates: {Error}", ex);
+            return;
+        }
+
+        int importedCount = 0;
+        int failedCount = 0;
+        foreach (StaticBuidplate buildplate in randomBuildplates)
+        {
+            if (currentBuildplates.GetBuildplate(buildplate.Id) is not null)
+            {
+                continue;
+            }
+
+            try
+            {
+                Log.Information("Importing random adventure buildplate {BuildplateId}", buildplate.Id);
+
+                await using Stream buildplateData = buildplate.OpenRead();
+                bool imported = buildplate.Extension.Equals(".json", StringComparison.OrdinalIgnoreCase)
+                    ? await importer.ImportProjectEarthTemplateAsync(buildplate.Id, $"[RANDOM] {buildplate.Id}", buildplateData, false)
+                    : await importer.ImportTemplateAsync(buildplate.Id, $"[RANDOM] {buildplate.Id}", buildplateData, false);
+
+                if (imported)
+                {
+                    importedCount++;
+                }
+                else
+                {
+                    failedCount++;
+                    Log.Error("Failed to import random adventure buildplate {BuildplateId}", buildplate.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                failedCount++;
+                Log.Error(ex, "Failed to import random adventure buildplate {BuildplateId}", buildplate.Id);
+            }
+        }
+
+        Log.Information(
+            "Random adventure buildplate import complete: {ImportedCount} imported, {SkippedCount} already present, {FailedCount} failed",
+            importedCount,
+            randomBuildplates.Count - importedCount - failedCount,
+            failedCount
+        );
     }
 
     public static IHostBuilder CreateHostBuilder(string[] args, int httpPort, string liveDbConnectionString)

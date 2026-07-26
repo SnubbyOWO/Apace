@@ -11,6 +11,8 @@ public readonly struct StaticBuidplate
 
     public string Id => Path.GetFileNameWithoutExtension(_path);
 
+    public string Extension => Path.GetExtension(_path);
+
     public Stream OpenRead()
         => File.OpenRead(_path);
 }

@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="MCeToJava" Version="1.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Solace.Common\Solace.Common.csproj" />
     <ProjectReference Include="..\Solace.DB\Solace.DB.csproj" />
     <ProjectReference Include="..\Solace.EventBus.Client\Solace.EventBus.Client.csproj" />

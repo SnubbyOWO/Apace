@@ -16,6 +16,9 @@ namespace Solace.BuildplateImporter;
 
 public sealed class Importer : IAsyncDisposable
 {
+    private static readonly object ProjectEarthConverterInitLock = new();
+    private static bool _projectEarthConverterInitialized;
+
     public readonly EarthDB EarthDB;
     public readonly EventBusClient? EventBusClient;
     public readonly ObjectStoreClient ObjectStoreClient;
@@ -30,6 +33,9 @@ public sealed class Importer : IAsyncDisposable
     }
 
     public async Task<bool> ImportTemplateAsync(string templateId, string name, Stream stream, CancellationToken cancellationToken = default)
+        => await ImportTemplateAsync(templateId, name, stream, true, cancellationToken);
+
+    public async Task<bool> ImportTemplateAsync(string templateId, string name, Stream stream, bool generatePreview, CancellationToken cancellationToken = default)
     {
         var worldData = await WorldData.LoadFromZipAsync(stream, Logger, cancellationToken);
 
@@ -38,9 +44,59 @@ public sealed class Importer : IAsyncDisposable
             return false;
         }
 
-        byte[] preview = await GeneratePreview(worldData);
+        byte[] preview = generatePreview ? await GeneratePreview(worldData) : [];
 
         return await StoreTemplate(templateId, name, preview, worldData, cancellationToken);
+    }
+
+    public async Task<bool> ImportProjectEarthTemplateAsync(string templateId, string name, Stream stream, bool generatePreview = true, CancellationToken cancellationToken = default)
+    {
+        EnsureProjectEarthConverterInitialized();
+
+        MCeToJava.Models.MCE.Buildplate? buildplate =
+            await MCeToJava.Utils.JsonUtils.DeserializeJsonAsync<MCeToJava.Models.MCE.Buildplate>(stream);
+        if (buildplate is null)
+        {
+            Logger.Error("Failed to parse Project Earth buildplate {TemplateId}", templateId);
+            return false;
+        }
+
+        var options = new MCeToJava.Converter.Options(
+            Logger,
+            MCeToJava.Models.ConvertTarget.Vienna,
+            "minecraft:plains",
+            name
+        );
+
+        MCeToJava.WorldData worldData = await MCeToJava.Converter.Convert(buildplate, null, options);
+
+        using var zipStream = new MemoryStream();
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, true))
+        {
+            foreach ((string fileName, byte[] data) in worldData.Files)
+            {
+                var entry = archive.CreateEntry(fileName);
+                using var entryStream = entry.Open();
+                await entryStream.WriteAsync(data, cancellationToken);
+            }
+        }
+
+        zipStream.Position = 0;
+        return await ImportTemplateAsync(templateId, name, zipStream, generatePreview, cancellationToken);
+    }
+
+    private void EnsureProjectEarthConverterInitialized()
+    {
+        lock (ProjectEarthConverterInitLock)
+        {
+            if (_projectEarthConverterInitialized)
+            {
+                return;
+            }
+
+            MCeToJava.Converter.InitRegistry(Logger);
+            _projectEarthConverterInitialized = true;
+        }
     }
 
     public async Task<bool> RegenerateTemplatePreviewAsync(string templateId, CancellationToken cancellationToken = default)
