@@ -35,10 +35,13 @@ internal sealed class ChallengeActionsController : SolaceControllerBase
             .Then(queryResults =>
             {
                 ChallengeProgressVersion progress = queryResults.Get<ChallengeProgressVersion>("challenges");
-                progress.EnsureDate(now);
+                ChallengesController.PrepareDailyProgress(playerId, progress, now);
                 progress.ClaimedChallengeIds ??= [];
+                progress.DailyClaimedChallengeIds ??= [];
 
-                bool firstClaim = progress.ClaimedChallengeIds.Add(challengeId);
+                bool firstClaim = ChallengesController.IsDailyChallenge(challengeId)
+                    ? progress.DailyClaimedChallengeIds.Add(challengeId)
+                    : progress.ClaimedChallengeIds.Add(challengeId);
                 progress.ActiveSeasonId = ChallengesController.ActiveSeasonId;
                 progress.ActiveSeasonChallengeId = ChallengesController.SelectActiveSeasonChallengeId(progress, progress.ActiveSeasonChallengeId);
                 progress.UpdatedAt = now;

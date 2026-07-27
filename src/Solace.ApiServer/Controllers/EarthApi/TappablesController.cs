@@ -3,9 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Security.Claims;
-using System.Text;
 using Solace.ApiServer.Exceptions;
 using Solace.ApiServer.Types.Common;
 using Solace.ApiServer.Types.Tappables;
@@ -14,6 +12,7 @@ using Solace.Common.Utils;
 using Solace.DB;
 using Solace.DB.Models.Player;
 using Solace.StaticData;
+using DailyChallengeDefinition = Solace.ApiServer.Controllers.EarthApi.ChallengesController.DailyChallengeDefinition;
 
 namespace Solace.ApiServer.Controllers.EarthApi;
 
@@ -25,9 +24,7 @@ internal sealed class TappablesController : SolaceControllerBase
     private static TappablesManager tappablesManager => Program.tappablesManager;
     private static EarthDB earthDB => Program.DB;
     private static StaticData.StaticData staticData => Program.staticData;
-    private const int DailyChallengeCount = 3;
-    private const string DailyGroupId = "29ebe650-072f-4f70-996f-4ffdda93ed1f";
-    private const string TreasureHuntId = "2b64c950-9b12-4ef3-99a0-cd59c9e1c8d4";
+    private const string LegacyDailyGroupId = "29ebe650-072f-4f70-996f-4ffdda93ed1f";
     private const string TreasureHuntReferenceId = "2b64c950-f80b-4491-b81d-bf90cee88db1";
     private const string BestDefenseReferenceId = "06eb0e50-b18d-43e8-9aad-422203ffdf28";
     private const string ChopChopReferenceId = "bd9d3fd7-12ef-49e0-91fa-c971795f8e35";
@@ -37,50 +34,17 @@ internal sealed class TappablesController : SolaceControllerBase
     private const string RubyReferenceId = "2425a33a-8c73-48d9-9de9-2f11d66c8016";
     private const string CowOrSheepReferenceId = "252bb18b-5a96-4ac5-bca0-45c1a0d51269";
     private const string ZooKeeperReferenceId = "61e55110-e206-4752-95a3-aeb2b98ad6ad";
-    private const string Season17CommonMobPettingZooReferenceId = "ccc1836f-ccda-4f33-8a4d-c42d8d366255";
-    private const string Season17BaaaReferenceId = "91d23ab8-7a63-4d6d-8b4b-6ae462a51067";
     private const string TappablesReferenceId = "6b0655aa-cc63-4876-a1e1-afb319403c1c";
     private const string PettingZooReferenceId = "6d01c0d0-2ac9-4549-be82-acd7f5631950";
     private const string TappableChestReferenceId = "d5cbfe47-504a-4e8a-a7b8-481de901c20f";
     private const string ChickenReferenceId = "e7b9715a-6c27-4708-bab6-ca4c80397625";
-    private const string BestDefenseId = "06eb0e50-05e7-49c7-9dfc-cf97bd94f377";
-    private const string ChopChopId = "bd9d3fd7-bb4f-4ef8-aa6e-dfe5368fd1d1";
     private const string CommonAdventureCrystalId = "4f16a053-4929-263a-c91a-29663e29df76";
-
-    private sealed record DailyChallengeDefinition(
-        string Key,
-        string ReferenceId,
-        int Threshold = 1
-    );
-
-    private static readonly DailyChallengeDefinition[] DailyChallengePool =
-    [
-        new(TreasureHuntId, TreasureHuntReferenceId, 3),
-        new(BestDefenseId, BestDefenseReferenceId, 5),
-        new(ChopChopId, ChopChopReferenceId, 3),
-        new("14e99996-0b42-4d2d-ad84-4ff279827ea6", TreasureTimeReferenceId, 3),
-        new("170b8a07-e781-4509-8de9-ddcc0beb88ba", CowReferenceId, 3),
-        new("1d981b84-a03a-451d-82a6-9bfe0fc885fb", MobReferenceId, 5),
-        new("2425a33a-8c73-48d9-9de9-2f11d66c8016", RubyReferenceId, 5),
-        new("252bb18b-5a96-4ac5-bca0-45c1a0d51269", CowOrSheepReferenceId, 4),
-        new("61e55110-e206-4752-95a3-aeb2b98ad6ad", ZooKeeperReferenceId, 5),
-        new("6b0655aa-cc63-4876-a1e1-afb319403c1c", TappablesReferenceId, 5),
-        new("6d01c0d0-2ac9-4549-be82-acd7f5631950", PettingZooReferenceId, 5),
-        new("d5cbfe47-504a-4e8a-a7b8-481de901c20f", TappableChestReferenceId, 3),
-        new("e7b9715a-6c27-4708-bab6-ca4c80397625", ChickenReferenceId, 3),
-    ];
 
     private static readonly DailyChallengeDefinition[] ContinuousChallengePool =
     [
         new("b8fa3840-43f2-4c87-9d69-f51d77a1a001", TappablesReferenceId, 10),
         new("b8fa3840-43f2-4c87-9d69-f51d77a1a002", TappableChestReferenceId, 3),
         new("b8fa3840-43f2-4c87-9d69-f51d77a1a003", MobReferenceId, 5),
-    ];
-
-    private static readonly DailyChallengeDefinition[] Season17TimedChallengePool =
-    [
-        new(Season17CommonMobPettingZooReferenceId, Season17CommonMobPettingZooReferenceId, 5),
-        new(Season17BaaaReferenceId, Season17BaaaReferenceId, 1),
     ];
 
     [HttpGet("locations/{lat}/{lon}")]
@@ -282,27 +246,23 @@ internal sealed class TappablesController : SolaceControllerBase
 
                     rewards.AddRubies(1); // TODO
 
-                    challengeProgress.EnsureDate(requestStartedOn);
-                    DailyChallengeDefinition[] selectedChallenges = SelectDailyChallenges(playerId, challengeProgress.DailyDateUtc!);
-                    Dictionary<string, int> progressBefore = selectedChallenges.ToDictionary(
+                    DailyChallengeDefinition[] selectedChallenges =
+                        ChallengesController.PrepareDailyProgress(playerId, challengeProgress, requestStartedOn);
+                    Dictionary<string, int> dailyProgressBefore = selectedChallenges.ToDictionary(
                         challenge => challenge.ReferenceId,
-                        challenge => challengeProgress.GetObjectiveProgress(challenge.ReferenceId));
+                        challenge => challengeProgress.GetDailyObjectiveProgress(challenge.ReferenceId));
+                    Dictionary<string, int> persistentProgressBefore = [];
                     foreach (DailyChallengeDefinition challenge in ContinuousChallengePool)
                     {
-                        progressBefore[challenge.ReferenceId] = challengeProgress.GetObjectiveProgress(challenge.ReferenceId);
-                    }
-
-                    foreach (DailyChallengeDefinition challenge in Season17TimedChallengePool)
-                    {
-                        progressBefore[challenge.ReferenceId] = challengeProgress.GetObjectiveProgress(challenge.ReferenceId);
+                        persistentProgressBefore[challenge.ReferenceId] =
+                            challengeProgress.GetObjectiveProgress(challenge.ReferenceId);
                     }
 
                     challengeProgress.RecordTappable(requestStartedOn);
                     AddDailyObjectiveProgress(challengeProgress, tappable, collectedItemIds, requestStartedOn);
-                    AddChallengeNotificationTokens(tokens, selectedChallenges, progressBefore, challengeProgress);
-                    AddChallengeNotificationTokens(tokens, ContinuousChallengePool, progressBefore, challengeProgress);
-                    AddChallengeNotificationTokens(tokens, Season17TimedChallengePool, progressBefore, challengeProgress);
-                    AddCompletedDailyChallengeRewards(query, playerId, tokenClaims, challengeProgress, rewards, requestStartedOn);
+                    AddChallengeNotificationTokens(tokens, selectedChallenges, dailyProgressBefore, challengeProgress, true);
+                    AddChallengeNotificationTokens(tokens, ContinuousChallengePool, persistentProgressBefore, challengeProgress, false);
+                    AddCompletedDailyChallengeRewards(query, playerId, tokenClaims, challengeProgress, selectedChallenges, rewards, requestStartedOn);
 
                     redeemedTappables.Add(tappable.Id, tappable.SpawnTime + tappable.ValidFor);
                     redeemedTappables.Prune(requestStartedOn);
@@ -384,6 +344,12 @@ internal sealed class TappablesController : SolaceControllerBase
 
     private static void AddDailyObjectiveProgress(ChallengeProgressVersion challengeProgress, TappablesManager.Tappable tappable, HashSet<string> collectedItemIds, long requestStartedOn)
     {
+        void AddDailyAndPersistentProgress(string referenceId)
+        {
+            challengeProgress.AddDailyObjectiveProgress(requestStartedOn, referenceId);
+            challengeProgress.AddObjectiveProgress(requestStartedOn, referenceId);
+        }
+
         string icon = tappable.Icon.ToString();
         bool isChest = icon.Contains("chest", StringComparison.OrdinalIgnoreCase);
         bool isCow = icon.Contains("cow", StringComparison.OrdinalIgnoreCase);
@@ -393,62 +359,71 @@ internal sealed class TappablesController : SolaceControllerBase
         bool isMob = isCow || isSheep || isChicken || isPig;
         bool hasOakLog = collectedItemIds.Any(IsOakLog);
 
-        challengeProgress.AddObjectiveProgress(requestStartedOn, TappablesReferenceId);
-        challengeProgress.AddObjectiveProgress(requestStartedOn, RubyReferenceId);
+        AddDailyAndPersistentProgress(TappablesReferenceId);
+        AddDailyAndPersistentProgress(RubyReferenceId);
 
         if (isChest)
         {
-            challengeProgress.AddObjectiveProgress(requestStartedOn, TreasureHuntReferenceId);
-            challengeProgress.AddObjectiveProgress(requestStartedOn, TreasureTimeReferenceId);
-            challengeProgress.AddObjectiveProgress(requestStartedOn, TappableChestReferenceId);
+            AddDailyAndPersistentProgress(TreasureHuntReferenceId);
+            AddDailyAndPersistentProgress(TreasureTimeReferenceId);
+            AddDailyAndPersistentProgress(TappableChestReferenceId);
         }
 
         if (isMob)
         {
-            challengeProgress.AddObjectiveProgress(requestStartedOn, MobReferenceId);
-            challengeProgress.AddObjectiveProgress(requestStartedOn, ZooKeeperReferenceId);
-            challengeProgress.AddObjectiveProgress(requestStartedOn, PettingZooReferenceId);
-            challengeProgress.AddObjectiveProgress(requestStartedOn, Season17CommonMobPettingZooReferenceId);
+            AddDailyAndPersistentProgress(MobReferenceId);
+            AddDailyAndPersistentProgress(ZooKeeperReferenceId);
+            AddDailyAndPersistentProgress(PettingZooReferenceId);
         }
 
         if (isCow)
         {
-            challengeProgress.AddObjectiveProgress(requestStartedOn, CowReferenceId);
-            challengeProgress.AddObjectiveProgress(requestStartedOn, CowOrSheepReferenceId);
+            AddDailyAndPersistentProgress(CowReferenceId);
+            AddDailyAndPersistentProgress(CowOrSheepReferenceId);
         }
 
         if (isSheep)
         {
-            challengeProgress.AddObjectiveProgress(requestStartedOn, CowOrSheepReferenceId);
-            challengeProgress.AddObjectiveProgress(requestStartedOn, Season17BaaaReferenceId);
+            AddDailyAndPersistentProgress(CowOrSheepReferenceId);
         }
 
         if (isChicken)
         {
-            challengeProgress.AddObjectiveProgress(requestStartedOn, ChickenReferenceId);
+            AddDailyAndPersistentProgress(ChickenReferenceId);
         }
 
         if (hasOakLog)
         {
-            challengeProgress.AddObjectiveProgress(requestStartedOn, ChopChopReferenceId);
+            AddDailyAndPersistentProgress(ChopChopReferenceId);
         }
     }
 
     private static bool IsOakLog(string itemId)
         => itemId == "a1bf49f9-1f1f-2a4d-5f7b-c0c5ba833068";
 
-    private static void AddChallengeNotificationTokens(Tokens tokens, DailyChallengeDefinition[] selectedChallenges, Dictionary<string, int> progressBefore, ChallengeProgressVersion challengeProgress)
+    private static void AddChallengeNotificationTokens(
+        Tokens tokens,
+        DailyChallengeDefinition[] selectedChallenges,
+        Dictionary<string, int> progressBefore,
+        ChallengeProgressVersion challengeProgress,
+        bool daily)
     {
         foreach (DailyChallengeDefinition challenge in selectedChallenges)
         {
             if (challengeProgress.RemovedContinuousChallengeIds?.Contains(challenge.Key) == true ||
-                challengeProgress.ClaimedChallengeIds?.Contains(challenge.Key) == true)
+                (daily
+                    ? challengeProgress.DailyClaimedChallengeIds?.Contains(challenge.Key)
+                    : challengeProgress.ClaimedChallengeIds?.Contains(challenge.Key)) == true)
             {
                 continue;
             }
 
             int before = Math.Min(progressBefore.GetValueOrDefault(challenge.ReferenceId), challenge.Threshold);
-            int after = Math.Min(challengeProgress.GetObjectiveProgress(challenge.ReferenceId), challenge.Threshold);
+            int after = Math.Min(
+                daily
+                    ? challengeProgress.GetDailyObjectiveProgress(challenge.ReferenceId)
+                    : challengeProgress.GetObjectiveProgress(challenge.ReferenceId),
+                challenge.Threshold);
             if (after <= before)
             {
                 continue;
@@ -483,22 +458,25 @@ internal sealed class TappablesController : SolaceControllerBase
         tokens.AddToken(U.RandomUuid().ToString(), token);
     }
 
-    private static void AddCompletedDailyChallengeRewards(EarthDB.Query query, string playerId, TokenClaims tokenClaims, ChallengeProgressVersion challengeProgress, Utils.Rewards rewards, long requestStartedOn)
+    private static void AddCompletedDailyChallengeRewards(
+        EarthDB.Query query,
+        string playerId,
+        TokenClaims tokenClaims,
+        ChallengeProgressVersion challengeProgress,
+        DailyChallengeDefinition[] selectedChallenges,
+        Utils.Rewards rewards,
+        long requestStartedOn)
     {
         string today = DateTimeOffset.FromUnixTimeMilliseconds(requestStartedOn).UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
-        if (playerId == "098f6bcd4621d373" && today == "2026-05-19")
-        {
-            challengeProgress.AddObjectiveProgress(requestStartedOn, TappablesReferenceId, 100);
-        }
-
-        bool shouldReward = false;
+        bool tokenClaimsChanged = false;
         int completedDailyChallenges = 0;
         tokenClaims.RedeemedChallengeRewardKeys ??= [];
+        challengeProgress.DailyClaimedChallengeIds ??= [];
 
-        foreach (DailyChallengeDefinition challenge in SelectDailyChallenges(playerId, challengeProgress.DailyDateUtc ?? today))
+        foreach (DailyChallengeDefinition challenge in selectedChallenges)
         {
-            if (challengeProgress.GetObjectiveProgress(challenge.ReferenceId) < challenge.Threshold)
+            if (challengeProgress.GetDailyObjectiveProgress(challenge.ReferenceId) < challenge.Threshold)
             {
                 continue;
             }
@@ -507,62 +485,37 @@ internal sealed class TappablesController : SolaceControllerBase
             string rewardKey = $"{today}:{challenge.Key}";
             if (tokenClaims.RedeemedChallengeRewardKeys.Add(rewardKey))
             {
+                tokenClaimsChanged = true;
                 rewards.AddExperiencePoints(10);
-                challengeProgress.ClaimedChallengeIds ??= [];
-                challengeProgress.ClaimedChallengeIds.Add(challenge.Key);
-                shouldReward = true;
             }
+
+            challengeProgress.DailyClaimedChallengeIds.Add(challenge.Key);
         }
 
-        string dailyGroupRewardKey = $"{today}:{DailyGroupId}";
-        if (completedDailyChallenges >= DailyChallengeCount && tokenClaims.RedeemedChallengeRewardKeys.Add(dailyGroupRewardKey))
+        if (completedDailyChallenges >= ChallengesController.DailyChallengeCount)
         {
-            rewards.AddExperiencePoints(25).AddItem(CommonAdventureCrystalId, 1);
-            challengeProgress.ClaimedChallengeIds ??= [];
-            challengeProgress.ClaimedChallengeIds.Add(DailyGroupId);
-            shouldReward = true;
+            string dailyGroupRewardKey = $"{today}:{ChallengesController.DailyGroupId}";
+            string legacyDailyGroupRewardKey = $"{today}:{LegacyDailyGroupId}";
+            bool legacyRewardAlreadyGranted =
+                tokenClaims.RedeemedChallengeRewardKeys.Contains(legacyDailyGroupRewardKey);
+
+            if (tokenClaims.RedeemedChallengeRewardKeys.Add(dailyGroupRewardKey))
+            {
+                tokenClaimsChanged = true;
+                if (!legacyRewardAlreadyGranted)
+                {
+                    rewards.AddExperiencePoints(25).AddItem(CommonAdventureCrystalId, 1);
+                }
+            }
+
+            challengeProgress.DailyClaimedChallengeIds.Add(ChallengesController.DailyGroupId);
         }
 
-        if (!shouldReward)
+        if (!tokenClaimsChanged)
         {
             return;
         }
 
         query.Update("tokenClaims", playerId, tokenClaims);
-    }
-
-    private static DailyChallengeDefinition[] OrderedDailyChallenges(string playerId, string dailyDateUtc)
-        => [.. DailyChallengePool
-            .OrderBy(challenge => StableSortKey($"{playerId}:{dailyDateUtc}:{challenge.ReferenceId}"))
-        ];
-
-    private static DailyChallengeDefinition[] SelectDailyChallenges(string playerId, string dailyDateUtc)
-    {
-        DailyChallengeDefinition[] orderedChallenges = OrderedDailyChallenges(playerId, dailyDateUtc);
-        if (!DateTime.TryParseExact(dailyDateUtc, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out DateTime dailyDate))
-        {
-            return [.. orderedChallenges.Take(DailyChallengeCount)];
-        }
-
-        string yesterday = dailyDate.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        HashSet<string> yesterdayKeys = [.. OrderedDailyChallenges(playerId, yesterday)
-            .Take(DailyChallengeCount)
-            .Select(challenge => challenge.Key)];
-
-        DailyChallengeDefinition[] freshChallenges = [.. orderedChallenges
-            .Where(challenge => !yesterdayKeys.Contains(challenge.Key))
-            .Take(DailyChallengeCount)];
-
-        return freshChallenges.Length == DailyChallengeCount
-            ? freshChallenges
-            : [.. freshChallenges.Concat(orderedChallenges
-                .Where(challenge => !freshChallenges.Any(freshChallenge => freshChallenge.Key == challenge.Key))
-                .Take(DailyChallengeCount - freshChallenges.Length))];
-    }
-
-    private static ulong StableSortKey(string value)
-    {
-        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
-        return BitConverter.ToUInt64(hash, 0);
     }
 }

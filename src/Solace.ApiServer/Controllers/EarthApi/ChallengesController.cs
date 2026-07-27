@@ -21,8 +21,8 @@ namespace Solace.ApiServer.Controllers.EarthApi;
 [Route("1/api/v{version:apiVersion}/player/challenges")]
 internal sealed class ChallengesController : ControllerBase
 {
-    private const int DailyChallengeCount = 3;
-    private const string DailyGroupId = "c1a1beef-0d01-4b1a-8d1e-000000000001";
+    internal const int DailyChallengeCount = 3;
+    internal const string DailyGroupId = "c1a1beef-0d01-4b1a-8d1e-000000000001";
     private const string DailyReferenceId = "2619913d-6504-4c74-9fc9-e03649a70efc";
     private const string TreasureHuntReferenceId = "2b64c950-f80b-4491-b81d-bf90cee88db1";
     private const string BestDefenseReferenceId = "06eb0e50-b18d-43e8-9aad-422203ffdf28";
@@ -57,7 +57,7 @@ internal sealed class ChallengesController : ControllerBase
         object ClientProperties
     );
 
-    private sealed record DailyChallengeDefinition(
+    internal sealed record DailyChallengeDefinition(
         string Key,
         string ReferenceId,
         int Threshold = 1
@@ -92,7 +92,7 @@ internal sealed class ChallengesController : ControllerBase
             .OrderBy(challenge => StableSortKey($"{playerId}:{dailyDateUtc}:{challenge.ReferenceId}"))
         ];
 
-    private static DailyChallengeDefinition[] SelectDailyChallenges(string playerId, string dailyDateUtc)
+    internal static DailyChallengeDefinition[] SelectDailyChallenges(string playerId, string dailyDateUtc)
     {
         DailyChallengeDefinition[] orderedChallenges = OrderedDailyChallenges(playerId, dailyDateUtc);
         if (!DateTime.TryParseExact(dailyDateUtc, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out DateTime dailyDate))
@@ -122,6 +122,43 @@ internal sealed class ChallengesController : ControllerBase
         return BitConverter.ToUInt64(hash, 0);
     }
 
+    internal static DailyChallengeDefinition[] PrepareDailyProgress(
+        string playerId,
+        ChallengeProgressVersion progress,
+        long timestamp)
+    {
+        progress.EnsureDate(timestamp);
+
+        DailyChallengeDefinition[] selectedChallenges =
+            SelectDailyChallenges(playerId, progress.DailyDateUtc!);
+        HashSet<string> selectedIds = [.. selectedChallenges.Select(challenge => challenge.Key)];
+
+        foreach (DailyChallengeDefinition challenge in DailyChallengePool)
+        {
+            bool wasClaimed = progress.ClaimedChallengeIds.Remove(challenge.Key);
+            if (wasClaimed &&
+                selectedIds.Contains(challenge.Key) &&
+                progress.GetDailyObjectiveProgress(challenge.ReferenceId) >= challenge.Threshold)
+            {
+                progress.DailyClaimedChallengeIds.Add(challenge.Key);
+            }
+        }
+
+        bool dailyGroupWasClaimed = progress.ClaimedChallengeIds.Remove(DailyGroupId);
+        if (dailyGroupWasClaimed &&
+            selectedChallenges.All(challenge =>
+                progress.GetDailyObjectiveProgress(challenge.ReferenceId) >= challenge.Threshold))
+        {
+            progress.DailyClaimedChallengeIds.Add(DailyGroupId);
+        }
+
+        return selectedChallenges;
+    }
+
+    internal static bool IsDailyChallenge(string challengeId)
+        => challengeId == DailyGroupId ||
+           DailyChallengePool.Any(challenge => challenge.Key == challengeId);
+
     [HttpGet]
     public async Task<Results<ContentHttpResult, BadRequest>> Get(CancellationToken cancellationToken)
     {
@@ -131,10 +168,14 @@ internal sealed class ChallengesController : ControllerBase
             return TypedResults.BadRequest();
         }
 
-        long endOfToday = DateTimeOffset.UtcNow.Date.AddDays(1).ToUnixTimeMilliseconds();
+        long now = HttpContext.GetTimestamp();
+        long endOfToday = DateTimeOffset.FromUnixTimeMilliseconds(now)
+            .UtcDateTime
+            .Date
+            .AddDays(1)
+            .ToUnixTimeMilliseconds();
         string dailyEndTime = TimeFormatter.FormatTime(endOfToday);
         string seasonEndTime = TimeFormatter.FormatTime(endOfToday + 14 * 24 * 60 * 60 * 1000);
-        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         ChallengeProgressVersion progress;
         try
@@ -144,17 +185,17 @@ internal sealed class ChallengesController : ControllerBase
                 .ExecuteAsync(Program.DB, cancellationToken);
 
             progress = results.Get<ChallengeProgressVersion>("challenges");
-            progress.EnsureDate(now);
         }
         catch (EarthDB.DatabaseException ex)
         {
             throw new ServerErrorException(ex);
         }
 
-        DailyChallengeDefinition[] dailyChallenges = SelectDailyChallenges(playerId, progress.DailyDateUtc!);
-        int dailyCount = dailyChallenges.Count(challenge => progress.GetObjectiveProgress(challenge.ReferenceId) >= challenge.Threshold);
+        DailyChallengeDefinition[] dailyChallenges = PrepareDailyProgress(playerId, progress, now);
+        int dailyCount = dailyChallenges.Count(challenge =>
+            progress.GetDailyObjectiveProgress(challenge.ReferenceId) >= challenge.Threshold);
         bool dailyComplete = dailyCount >= DailyChallengeCount;
-        bool dailyClaimed = progress.ClaimedChallengeIds?.Contains(DailyGroupId) == true;
+        bool dailyClaimed = progress.DailyClaimedChallengeIds.Contains(DailyGroupId);
         string dailyState = dailyClaimed ? "Claimed" : dailyComplete ? "Completed" : "Active";
         int dailyPercent = dailyCount * 100 / DailyChallengeCount;
 
@@ -164,41 +205,35 @@ internal sealed class ChallengesController : ControllerBase
         string activeSeasonChallengeId = SelectActiveSeasonChallengeId(progress, progress.ActiveSeasonChallengeId);
 
         var challenges = BuildSeasonChallenges(seasonEndTime, progress, activeSeasonChallengeId);
-        if (!dailyClaimed)
-        {
-            challenges[DailyGroupId] = new ChallengeRecord(
-                DailyReferenceId,
-                null,
-                DailyGroupId,
-                "PersonalTimed",
-                "Regular",
-                "retention",
-                null,
-                0,
-                dailyEndTime,
-                dailyState,
-                dailyComplete,
-                dailyPercent,
-                dailyCount,
-                DailyChallengeCount,
-                [],
-                "And",
-                new Rewards(0, 25, null, [new Rewards.Item(CommonAdventureCrystalId, 1)], [], [], [], []),
-                new object()
-            );
-        }
+        challenges[DailyGroupId] = new ChallengeRecord(
+            DailyReferenceId,
+            null,
+            DailyGroupId,
+            "PersonalTimed",
+            "Regular",
+            "retention",
+            null,
+            0,
+            dailyEndTime,
+            dailyState,
+            dailyComplete,
+            dailyPercent,
+            dailyCount,
+            DailyChallengeCount,
+            [],
+            "And",
+            new Rewards(0, 25, null, [new Rewards.Item(CommonAdventureCrystalId, 1)], [], [], [], []),
+            new object()
+        );
 
         for (int index = 0; index < dailyChallenges.Length; index++)
         {
             DailyChallengeDefinition challenge = dailyChallenges[index];
             int threshold = challenge.Threshold;
-            int currentCount = Math.Min(progress.GetObjectiveProgress(challenge.ReferenceId), threshold);
+            int currentCount = Math.Min(progress.GetDailyObjectiveProgress(challenge.ReferenceId), threshold);
             bool isComplete = currentCount >= threshold;
-            bool isClaimed = progress.ClaimedChallengeIds?.Contains(challenge.Key) == true;
-            if (isComplete || isClaimed)
-            {
-                continue;
-            }
+            bool isClaimed = progress.DailyClaimedChallengeIds.Contains(challenge.Key);
+            string state = isClaimed ? "Claimed" : isComplete ? "Completed" : "Active";
 
             challenges[challenge.Key] = new ChallengeRecord(
                 challenge.ReferenceId,
@@ -210,8 +245,8 @@ internal sealed class ChallengesController : ControllerBase
                 Rarity.COMMON,
                 index + 1,
                 dailyEndTime,
-                "Active",
-                false,
+                state,
+                isComplete,
                 currentCount * 100 / threshold,
                 currentCount,
                 threshold,
@@ -281,7 +316,10 @@ internal sealed class ChallengesController : ControllerBase
     private static Dictionary<string, object> BuildSeasonChallenges(string seasonEndTime, ChallengeProgressVersion progress, string activeSeasonChallengeId)
     {
         var templates = Json.Deserialize<Dictionary<string, ChallengeRecord>>(Season17ChallengesJson) ?? [];
-        return templates.ToDictionary(
+
+        return templates
+            .Where(entry => entry.Value.Duration == "Season")
+            .ToDictionary(
             entry => entry.Key,
             entry => (object)ApplyProgress(entry.Key, entry.Value with { EndTimeUtc = seasonEndTime }, progress, activeSeasonChallengeId));
     }
