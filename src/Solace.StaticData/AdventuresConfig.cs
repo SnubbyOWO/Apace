@@ -78,6 +78,29 @@ public sealed class AdventuresConfig
     public AdventureCrystalType? PickCrystalType(Random random)
         => PickWeighted(SpawnConfig.CrystalTypes, item => item.PickWeight, random);
 
+    public long GetDurationForRarity(AdventureCrystalType.RarityE rarity)
+    {
+        long? configuredDuration = SpawnConfig.CrystalTypes
+            .FirstOrDefault(crystalType => crystalType.Rarity == rarity)
+            ?.DurationMs;
+
+        return configuredDuration is > 0
+            ? configuredDuration.Value
+            : GetDefaultDurationForRarity(rarity);
+    }
+
+    public static long GetDefaultDurationForRarity(AdventureCrystalType.RarityE rarity)
+        => rarity switch
+        {
+            AdventureCrystalType.RarityE.COMMON => 10 * 60 * 1000,
+            AdventureCrystalType.RarityE.UNCOMMON => 15 * 60 * 1000,
+            AdventureCrystalType.RarityE.RARE => 15 * 60 * 1000,
+            AdventureCrystalType.RarityE.EPIC => 30 * 60 * 1000,
+            AdventureCrystalType.RarityE.LEGENDARY => 60 * 60 * 1000,
+            AdventureCrystalType.RarityE.OOBE => 60 * 60 * 1000,
+            _ => throw new UnreachableException()
+        };
+
     public string? PickTemplateForFolder(string folder, Random random)
     {
         int randomBuildplateChance = int.Clamp(SpawnConfig.RandomBuildplateChance, 0, 100);
@@ -189,9 +212,12 @@ public sealed class AdventuresConfig
         AdventureCrystalType[] CrystalTypes
     )
     {
-        public int RandomBuildplateChance { get; init; }
+        public int RandomBuildplateChance { get; init; } = 90;
 
-        public static AdventureSpawnConfig Disabled => new(0, 0, 0, 0, 0, 0, 0, []);
+        public static AdventureSpawnConfig Disabled => new(0, 0, 0, 0, 0, 0, 0, [])
+        {
+            RandomBuildplateChance = 0
+        };
     }
 
     public sealed record AdventureCrystalType(
@@ -201,6 +227,8 @@ public sealed class AdventuresConfig
         int PickWeight
     )
     {
+        public long? DurationMs { get; init; }
+
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public enum RarityE
         {

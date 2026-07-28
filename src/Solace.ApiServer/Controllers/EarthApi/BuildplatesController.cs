@@ -456,14 +456,17 @@ internal sealed class BuildplatesController : SolaceControllerBase
             }
 
             string rarity = catalogItem.Rarity.ToString();
+            var adventureRarity = Enum.Parse<TappablesManager.Adventure.RarityE>(rarity);
+            long adventureDuration = Program.staticData.AdventuresConfig.GetDurationForRarity(
+                Enum.Parse<AdventuresConfig.AdventureCrystalType.RarityE>(rarity));
             TappablesManager.Adventure adventure = tappablesManager.PlacePlayerAdventure(
                 playerId,
                 lat,
                 lon,
                 requestStartedOn,
-                60 * 60 * 1000,
+                adventureDuration,
                 AdventureMapIcons.ToClientMapIcon(catalogItem.Name, rarity),
-                Enum.Parse<TappablesManager.Adventure.RarityE>(rarity),
+                adventureRarity,
                 templateId);
 
             PrewarmAdventureInstance(playerId, adventure);
